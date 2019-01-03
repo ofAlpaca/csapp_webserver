@@ -113,6 +113,7 @@ void read_requesthdrs(rio_t *rp)
         Rio_readlineb(rp, buf, MAXLINE);
         printf("%s", buf);
     }
+    fflush(stdout);
     return;
 }
 /* $end read_requesthdrs */
