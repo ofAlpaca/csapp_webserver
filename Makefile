@@ -1,4 +1,13 @@
 CFLAGS = -O0 -Wall -Werror -g3
 
-all:
+webserver:
 	gcc $(CFLAGS) -o webserver tiny.c csapp.c -pthread
+
+test: webserver
+	./webserver 7777
+
+log: webserver
+	./webserver 7777 > logfile
+
+clean:
+	rm -rf logfile webserver
