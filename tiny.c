@@ -16,6 +16,7 @@ void clienterror(int fd,
                  char *errnum,
                  char *shortmsg,
                  char *longmsg);
+void sigchldHandler(int sig);                 
 
 int main(int argc, char **argv)
 {
@@ -62,12 +63,14 @@ void doit(int fd)
         return;
     printf("%s", buf);
     sscanf(buf, "%s %s %s", method, uri,
-           version);                  // line:netp:doit:parserequest
-    if (strcasecmp(method, "GET")) {  // line:netp:doit:beginrequesterr
+           version);                  // line:netp:doit:parserequest   
+
+    /*if (strcasecmp(method, "GET")) {  // line:netp:doit:beginrequesterr
         clienterror(fd, method, "501", "Not Implemented",
                     "Tiny does not implement this method");
         return;
-    }                        // line:netp:doit:endrequesterr
+    }                        // line:netp:doit:endrequesterr */
+
     read_requesthdrs(&rio);  // line:netp:doit:readrequesthdrs
 
     /* Parse URI from GET request */
@@ -202,6 +205,7 @@ void get_filetype(char *filename, char *filetype)
 /* $begin serve_dynamic */
 void serve_dynamic(int fd, char *filename, char *cgiargs)
 {
+    if (signal(SIGCHLD,sigchldHandler) == SIG_ERR ) unix_error("signal error");
     char buf[MAXLINE], *emptylist[] = {NULL};
 
     /* Return first part of HTTP response */
@@ -218,7 +222,7 @@ void serve_dynamic(int fd, char *filename, char *cgiargs)
         Execve(filename, emptylist, environ);
             /* Run CGI program */  // line:netp:servedynamic:execve
     }
-    Wait(NULL);
+    // Wait(NULL);
         /* Parent waits for and reaps child */  // line:netp:servedynamic:wait
 }
 /* $end serve_dynamic */
@@ -256,3 +260,18 @@ void clienterror(int fd,
     Rio_writen(fd, body, strlen(body));
 }
 /* $end clienterror */
+
+/*
+ * handler - when SIGCHLD happen handle it
+ * chapter 8.5 code
+ */
+void sigchldHandler(int sig)
+{
+    int old_error_num = errno ;
+    while(waitpid(-1,NULL,0)>0){
+        continue ;
+    }
+    if (errno != ECHILD) Sio_error("waitpid error");
+    errno = old_error_num ;
+}
+/* $end handler */
