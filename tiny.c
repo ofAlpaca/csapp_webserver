@@ -6,20 +6,25 @@
 #include "csapp.h"
 
 void doit(int fd);
+int is_file_valid(char *filename, struct stat *sbuf, int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize);
+void serve_static(int fd, char *filename, int filesize, int headOnly);
 void get_filetype(char *filename, char *filetype);
-void serve_dynamic(int fd, char *filename, char *cgiargs);
+void serve_dynamic(int fd, char *filename, char *cgiargs, int headOnly);
 void clienterror(int fd,
                  char *cause,
                  char *errnum,
                  char *shortmsg,
                  char *longmsg);
-void sigchldHandler(int sig);                 
+void sigchldHandler(int sig);             
+int improve_Rio_writen(int fd, void *usrbuf, size_t n);    
 
 int main(int argc, char **argv)
 {
+    
+    Signal(SIGPIPE, SIG_IGN); // In order to catch SIGPIPE
+
     int listenfd, connfd;
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
@@ -52,6 +57,7 @@ int main(int argc, char **argv)
 void doit(int fd)
 {
     int is_static;
+    int is_head_method = 0;
     struct stat sbuf;
     char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
     char filename[MAXLINE], cgiargs[MAXLINE];
@@ -62,18 +68,12 @@ void doit(int fd)
     if (!Rio_readlineb(&rio, buf, MAXLINE))  // line:netp:doit:readrequest
         return;
     printf("%s", buf);
-    sscanf(buf, "%s %s %s", method, uri,
-           version);                  // line:netp:doit:parserequest   
-
-    /*if (strcasecmp(method, "GET")) {  // line:netp:doit:beginrequesterr
-        clienterror(fd, method, "501", "Not Implemented",
-                    "Tiny does not implement this method");
-        return;
-    }                        // line:netp:doit:endrequesterr */
+    sscanf(buf, "%s %s %s", method, uri, version);     //line:netp:doit:parserequest   
+    if (strcasecmp(method, "HEAD") == 0) // HEAD method do not need response body
+        is_head_method = 1;
 
     read_requesthdrs(&rio);  // line:netp:doit:readrequesthdrs
-
-    /* Parse URI from GET request */
+    /* Parse URI from HTTP request */
     is_static = parse_uri(uri, filename, cgiargs);  // line:netp:doit:staticcheck
     if (stat(filename, &sbuf) < 0) {  // line:netp:doit:beginnotfound
         clienterror(fd, filename, "404", "Not found",
@@ -88,7 +88,7 @@ void doit(int fd)
                         "Tiny couldn't read the file");
             return;
         }
-        serve_static(fd, filename, sbuf.st_size);  // line:netp:doit:servestatic
+        serve_static(fd, filename, sbuf.st_size, is_head_method);  // line:netp:doit:servestatic
     } else {                                       /* Serve dynamic content */
         if (!(S_ISREG(sbuf.st_mode)) ||
             !(S_IXUSR & sbuf.st_mode)) {  // line:netp:doit:executable
@@ -96,7 +96,7 @@ void doit(int fd)
                         "Tiny couldn't run the CGI program");
             return;
         }
-        serve_dynamic(fd, filename, cgiargs);  // line:netp:doit:servedynamic
+        serve_dynamic(fd, filename, cgiargs, is_head_method);  // line:netp:doit:servedynamic
     }
 }
 /* $end doit */
@@ -156,10 +156,10 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
  * serve_static - copy a file back to the client
  */
 /* $begin serve_static */
-void serve_static(int fd, char *filename, int filesize)
+void serve_static(int fd, char *filename, int filesize, int headOnly)
 {
     int srcfd;
-    char *srcp, filetype[MAXLINE], buf[MAXBUF];
+    char filetype[MAXLINE], buf[MAXBUF], *fbuf;
 
     /* Send response headers to client */
     get_filetype(filename, filetype);     // line:netp:servestatic:getfiletype
@@ -168,17 +168,19 @@ void serve_static(int fd, char *filename, int filesize)
     sprintf(buf, "%sConnection: close\r\n", buf);
     sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
     sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
-    Rio_writen(fd, buf, strlen(buf));  // line:netp:servestatic:endserve
+    improve_Rio_writen(fd, buf, strlen(buf));  // line:netp:servestatic:endserve
     printf("Response headers:\n");
     printf("%s", buf);
-
-    /* Send response body to client */
-    srcfd = Open(filename, O_RDONLY, 0);  // line:netp:servestatic:open
-    srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd,
-                0);                  // line:netp:servestatic:mmap
-    Close(srcfd);                    // line:netp:servestatic:close
-    Rio_writen(fd, srcp, filesize);  // line:netp:servestatic:write
-    Munmap(srcp, filesize);          // line:netp:servestatic:munmap
+    
+    if (!headOnly) {
+        /* Send response body to client */
+        srcfd = Open(filename, O_RDONLY, 0);    //line:netp:servestatic:open
+        fbuf = malloc(filesize);
+        Rio_readn(srcfd, fbuf, filesize);
+        Close(srcfd);
+        improve_Rio_writen(fd, fbuf, filesize);
+        free(fbuf);
+    }
 }
 
 /*
@@ -194,6 +196,8 @@ void get_filetype(char *filename, char *filetype)
         strcpy(filetype, "image/png");
     else if (strstr(filename, ".jpg"))
         strcpy(filetype, "image/jpeg");
+    else if(strstr(filename, ".mpg"))
+        strcpy(filetype, "video/mpg");
     else
         strcpy(filetype, "text/plain");
 }
@@ -203,7 +207,7 @@ void get_filetype(char *filename, char *filetype)
  * serve_dynamic - run a CGI program on behalf of the client
  */
 /* $begin serve_dynamic */
-void serve_dynamic(int fd, char *filename, char *cgiargs)
+void serve_dynamic(int fd, char *filename, char *cgiargs, int headOnly)
 {
     if (signal(SIGCHLD,sigchldHandler) == SIG_ERR ) unix_error("signal error");
     char buf[MAXLINE], *emptylist[] = {NULL};
@@ -213,17 +217,13 @@ void serve_dynamic(int fd, char *filename, char *cgiargs)
     Rio_writen(fd, buf, strlen(buf));
     sprintf(buf, "Server: Tiny Web Server\r\n");
     Rio_writen(fd, buf, strlen(buf));
-
-    if (Fork() == 0) { /* Child */  // line:netp:servedynamic:fork
+    if (Fork() == 0) { /* Child */ //line:netp:servedynamic:fork
         /* Real server would set all CGI vars here */
-        setenv("QUERY_STRING", cgiargs, 1);  // line:netp:servedynamic:setenv
-        Dup2(fd, STDOUT_FILENO);
-            /* Redirect stdout to client */  // line:netp:servedynamic:dup2
-        Execve(filename, emptylist, environ);
-            /* Run CGI program */  // line:netp:servedynamic:execve
+        setenv("QUERY_STRING", cgiargs, 1); //line:netp:servedynamic:setenv
+        Dup2(fd, STDOUT_FILENO);         /* Redirect stdout to client */ //line:netp:servedynamic:dup2
+        Execve(filename, emptylist, environ); /* Run CGI program */ //line:netp:servedynamic:execve
     }
-    // Wait(NULL);
-        /* Parent waits for and reaps child */  // line:netp:servedynamic:wait
+    Wait(NULL);
 }
 /* $end serve_dynamic */
 
@@ -252,14 +252,28 @@ void clienterror(int fd,
 
     /* Print the HTTP response */
     sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-    Rio_writen(fd, buf, strlen(buf));
+    if( improve_Rio_writen(fd, buf, strlen(buf)) == -1) return ; // if the client is disconnected, then return
     sprintf(buf, "Content-type: text/html\r\n");
-    Rio_writen(fd, buf, strlen(buf));
-    sprintf(buf, "Content-length: %d\r\n\r\n", (int) strlen(body));
-    Rio_writen(fd, buf, strlen(buf));
-    Rio_writen(fd, body, strlen(body));
+    if( improve_Rio_writen(fd, buf, strlen(buf)) == -1) return ; // if the client is disconnected, then return
+    sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
+    if( improve_Rio_writen(fd, buf, strlen(buf)) == -1) return ; // if the client is disconnected, then return
+    if( improve_Rio_writen(fd, body, strlen(body)) == -1) return ; // if the client is disconnected, then return
 }
 /* $end clienterror */
+
+/* improved_Rio_writen - be able to ignore the SIGPIPE signal.
+ * By ofAlpaca
+ */
+int improve_Rio_writen(int fd, void *usrbuf, size_t n) {
+    if(rio_writen(fd, usrbuf, n) != n){
+        if(errno == EPIPE)
+            printf("client side has disconnected\n");
+        else
+            unix_error("Rio_writen error");
+        return -1;
+    }
+    return 0;
+}
 
 /*
  * handler - when SIGCHLD happen handle it

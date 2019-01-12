@@ -1,14 +1,22 @@
-CFLAGS = -O0 -Wall -Werror -g3
+CC = gcc
+CFLAGS = -O2 -Wall -I .
 
-webserver:
-	gcc $(CFLAGS) -o webserver tiny.c csapp.c -pthread
-	gcc $(CFLAGS) -o ./cgi-bin/adder ./cgi-bin/adder.c csapp.c -pthread
+# This flag includes the Pthreads library on a Linux box.
+# Others systems will probably require something different.
+LIB = -lpthread
 
-test: webserver
-	./webserver 7777
+all: tiny cgi
 
-log: webserver
-	./webserver 7777 > logfile
+tiny: tiny.c csapp.o
+	$(CC) $(CFLAGS) -o tiny tiny.c csapp.o $(LIB)
+
+csapp.o: csapp.c
+	$(CC) $(CFLAGS) -c csapp.c
+
+cgi:
+	(cd cgi-bin; make)
 
 clean:
-	rm -rf logfile webserver ./cgi-bin/adder
+	rm -f *.o tiny *~
+	(cd cgi-bin; make clean)
+
