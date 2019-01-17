@@ -1,6 +1,6 @@
 # CSAPP chapter 11 homework
 
-## Ansewer all the homework of Chapter 11 in CSAPP 3e
+## Answer all the homework of Chapter 11 in CSAPP 3e
 contributed by < TerryShu > 、 < ofAlpaca >
 
 ### 11.6
