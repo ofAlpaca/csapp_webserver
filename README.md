@@ -23,3 +23,7 @@ contributed by < TerryShu > 、 < ofAlpaca >
 * Extend Tiny so that it serves dynamic content requested by the HTTP POST method. Check your work using your favorite Web browser.
 ### 11.13
 * Modify Tiny so  that  it  deals  cleanly  (without  terminating)  with  the  SIGPIPE signals and EPIPE errors that occur when the write function attempts to write to a prematurely closed connection.
+
+## How to run ?
+after ```make```, you can do
+```./tiny [port]``` to run the tiny server.
