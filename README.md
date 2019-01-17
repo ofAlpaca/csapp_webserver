@@ -3,6 +3,8 @@
 ## Answer all the homework of Chapter 11 in CSAPP 3e
 contributed by < TerryShu > 、 < ofAlpaca >
 
+[Detail in Hackmd](https://hackmd.io/s/S1OZ7bGb4)
+
 ### 11.6
 * A. Modify Tiny so that it echoes every request line and request header.
 * B. Use your favorite browser to make a request to Tiny for static content. Capture the output from Tiny in a file.
